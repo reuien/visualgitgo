@@ -7,40 +7,37 @@ import (
 	"log"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strings"
 )
 
 func recursiveScanFolder(folder string) []string {
-	return scanGitFolders(make([]string, 0), folder)
-}
-
-func scanGitFolders(folders []string, folder string) []string {
-	folder = strings.TrimSuffix(folder, "/")
-	f, err := os.Open(folder)
+	folder, err := filepath.Abs(folder)
 	if err != nil {
 		log.Fatal(err)
 	}
-	files, err := f.ReadDir(-1)
-	f.Close()
-	if err != nil {
-		log.Fatal(err)
-	}
-	var path string
-	for _, file := range files {
-		if file.IsDir() {
-			path = folder + "/" + file.Name()
-			// file is a FILE*
-			if file.Name() == ".git" {
-				path = strings.TrimSuffix(path, "/.git")
-				fmt.Println(path)
-				folders = append(folders, path)
-				continue
-			}
-			if file.Name() == "vendor" || file.Name() == "node_modules" {
-				continue
-			}
-			folders = scanGitFolders(folders, path)
+	var folders []string
+	err = filepath.WalkDir(folder, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
+		if entry.Name() == ".git" {
+			if entry.IsDir() || entry.Type().IsRegular() {
+				repo := filepath.Dir(path)
+				fmt.Println(repo)
+				folders = append(folders, repo)
+			}
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+		}
+		if entry.IsDir() && (entry.Name() == "vendor" || entry.Name() == "node_modules") {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	if err != nil {
+		log.Fatal(err)
 	}
 	return folders
 }
@@ -79,7 +76,9 @@ func parseRepoIntoSlice(filePath string) []string {
 	var lines []string
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+		if line := strings.TrimSpace(scanner.Text()); line != "" {
+			lines = append(lines, line)
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		if err != io.EOF {
@@ -112,7 +111,9 @@ func sliceContains(existing []string, elem string) bool {
 
 func storeSliceToFile(repos []string, filePath string) {
 	content := strings.Join(repos, "\n")
-	os.WriteFile(filePath, []byte(content), 0755)
+	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func addNewSliceElementsToFile(filePath string, newRepo []string) {
@@ -122,10 +123,10 @@ func addNewSliceElementsToFile(filePath string, newRepo []string) {
 }
 
 func scan(path string) {
-	fmt.Println("Found Flolders:\n\n")
+	fmt.Println("Found repositories:")
 	repositories := recursiveScanFolder(path)
 	filePath := getDotFilePath()
 	addNewSliceElementsToFile(filePath, repositories)
-	fmt.Println("\n\nSuccessfully added \n\n")
+	fmt.Println("Successfully added.")
 
 }
